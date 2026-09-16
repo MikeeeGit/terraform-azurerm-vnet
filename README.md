@@ -1,5 +1,7 @@
 # terraform-azurerm-vnet
 
+[![Terraform CI](https://github.com/MikeeeGit/terraform-azurerm-vnet/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/MikeeeGit/terraform-azurerm-vnet/actions/workflows/ci.yml)
+
 A focused Terraform module for one Azure virtual network, custom DNS servers, an optional existing DDoS Protection Plan, and optional protection-alert diagnostics. It is a public rewrite of `AZ-TF-MOD-vnet` with explicit inputs and no organization-specific resource IDs, naming policy, or provider configuration.
 
 This module is an independent community project, not an Azure Verified Module. It is intended as a small, understandable building block for a wider network foundation.
