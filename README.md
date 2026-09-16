@@ -1,122 +1,89 @@
 # terraform-azurerm-vnet
 
-[![Terraform CI](https://github.com/MikeeeGit/terraform-azurerm-vnet/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/MikeeeGit/terraform-azurerm-vnet/actions/workflows/ci.yml)
+Azure VNet and DNS module, adapted from `AZ-TF-MOD-vnet`. It keeps the original naming, public/private DNS record composition and whole-resource output so existing Terraform roots can continue to use the design.
 
-A focused Terraform module for one Azure virtual network, custom DNS servers, an optional existing DDoS Protection Plan, and optional protection-alert diagnostics. It is a public rewrite of `AZ-TF-MOD-vnet` with explicit inputs and no organization-specific resource IDs, naming policy, or provider configuration.
-
-This module is an independent community project, not an Azure Verified Module. It is intended as a small, understandable building block for a wider network foundation.
+The module creates one VNet, optional public and private DNS zones with A/CNAME/MX records, one VNet link per private zone, and optional VNet diagnostics. It associates an existing DDoS Protection Plan when supplied. Resource groups, workspaces, DDoS plans, subnets, peerings and private endpoints belong to the caller or other modules.
 
 ## Usage
 
-Configure the AzureRM provider and authentication in the calling root module. The following example assumes this repository is checked out beside that root:
-
 ```hcl
-provider "azurerm" {
-  features {}
+module "vnet" {
+  source = "git::https://github.com/MikeeeGit/terraform-azurerm-vnet.git?ref=v0.2.0"
+
+  resource_group_name = azurerm_resource_group.network.name
+  location            = azurerm_resource_group.network.location
+  label               = "example-dev"
+  vnet_ip_range       = ["10.40.0.0/16"]
+  tags                = { Environment = "dev", ManagedBy = "Terraform" }
+
+  private_dns = [{
+    zone_name     = "internal.example.test"
+    a_records     = [{ name = "app", ip = "10.40.1.4" }]
+    cname_records = [{ name = "api", target = "app.internal.example.test" }]
+    mx_records    = []
+  }]
 }
 
-module "vnet" {
-  source = "../terraform-azurerm-vnet"
-
-  name                = "vnet-example"
-  resource_group_name = "rg-example"
-  location            = "uksouth"
-  address_space       = ["10.80.0.0/16"]
-  tags = {
-    environment = "example"
-    managed_by  = "terraform"
-  }
+output "vnet_id" {
+  value = module.vnet.vnet.id
 }
 ```
 
-The resource group must already exist. [The complete basic example](examples/basic) creates its own synthetic resource group. After publication, consumers can use either Git host and pin the module source to a reviewed commit or release tag. No remote source URL is declared until the public repositories exist.
-
-## Requirements
-
-| Dependency | Version |
-| --- | --- |
-| Terraform | `>= 1.9, < 2.0` |
-| `hashicorp/azurerm` | `>= 4.0, < 5.0` |
-
-Provider and backend configuration belong to the caller. For an actual deployment, AzureRM 4 requires a subscription ID, for example through `ARM_SUBSCRIPTION_ID`. Use workload identity federation for CI authentication. Credentials and state must never be committed to this repository. The checked-in dependency locks record the versions used for this repository's checks; consumers resolve providers through their own root lock file.
+Requires Terraform `>= 1.9.0, < 2.0.0` and AzureRM `>= 4.33.0, < 5.0.0`. The minimum provider version supports `enabled_metric`, preserving metrics without the deprecated `metric` block. Configure the AzureRM provider and authentication in the calling root. This reusable module has no backend or provider configuration.
 
 ## Inputs
 
-| Name | Type | Default | Purpose |
-| --- | --- | --- | --- |
-| `name` | `string` | required | Complete VNet name; 2-64 characters using Azure's naming rules. |
-| `resource_group_name` | `string` | required | Existing resource group name. |
-| `location` | `string` | required | Azure region. |
-| `address_space` | `list(string)` | required | One or more distinct IPv4 or IPv6 CIDR ranges. |
-| `dns_servers` | `list(string)` | `[]` | Custom DNS server IPs; empty uses Azure-provided DNS. |
-| `tags` | `map(string)` | `{}` | Caller-owned tags, passed through without overrides. |
-| `ddos_protection_plan_id` | `string` | `null` | Existing DDoS Protection Plan resource ID. |
-| `log_analytics_workspace_id` | `string` | `null` | Existing Log Analytics workspace resource ID for diagnostics. |
+| Input | Type | Default / meaning |
+| --- | --- | --- |
+| `resource_group_name` | string | Required existing RG |
+| `location` | string | Required Azure region |
+| `label` | string | Required naming prefix |
+| `vnet_ip_range` | list(string) | Required nonempty CIDR list |
+| `vnet_suffix` | string | `vnet01`; name is `<label>-<suffix>` |
+| `tags` | map(string) | `{}`; generated `Name` tag takes precedence |
+| `dns_servers` | list(string) | `[]` for Azure DNS; otherwise IP addresses |
+| `ddos_plan_id` | string | `""`; existing plan ID enables association |
+| `diag_log_workspace` | string or null | `null`; explicit workspace ID enables diagnostics |
+| `dns` | list(object) | `[]`; public DNS configuration below |
+| `private_dns` | list(object) | `[]`; private DNS configuration below |
+| `dns_zone_name` | string | `""`; optional legacy link selector |
 
-Optional resource IDs accept `null`, not empty strings. The null/non-null value of `log_analytics_workspace_id` must be known at plan time because it controls whether a diagnostic setting exists. Supply an existing workspace ID, rather than a newly created workspace's computed ID in the same plan.
+`dns` and `private_dns` share this schema. Each record collection is optional and defaults to `[]`, while the original explicit empty collections remain accepted:
 
-CIDR validation checks syntax and duplicate entries. Callers must still design non-overlapping address spaces and comply with Azure's dual-stack requirements. Setting custom DNS servers does not deploy a resolver or configure forwarding rules.
+```hcl
+dns = [{
+  zone_name     = "example.org"
+  a_records     = [{ name = "www", ip = "192.0.2.10" }]
+  cname_records = [{ name = "docs", target = "www.example.org" }]
+  mx_records    = [{ preference = 10, exchange = "mail.example.org" }]
+}]
+```
+
+A records contain one IPv4 address per name. CNAME records contain one target. MX records form one apex (`@`) set per zone. All record TTLs remain 300 seconds. Zone names are unique within each collection; A/CNAME names are unique within each zone. DNS resolution and registrar delegation are outside this module.
+
+Private zones are created in the supplied RG and linked to the VNet with registration disabled. Normally the link is `<zone>-link`. If `dns_zone_name` exactly matches a configured private zone, that zone instead uses the original `<label>-dns-zone-private` link. The fixed selector uses the selected zone name and avoids creating a duplicate link. It is not a way to reference an existing external zone; callers can create their own links for external zones.
+
+Diagnostics send both `VMProtectionAlerts` and `AllMetrics` to the explicitly supplied workspace. The workspace ID's null/non-null status must be known at plan time. No workspace ID, tenant, subscription or estate name is supplied by default. For a newly created workspace whose ID is unknown at plan time, supply a deterministically constructed workspace ID or provision the workspace in a separate foundation first.
+
+The generated VNet `Name` tag is `<label>-vnet`, even when the suffix differs. Public/private zones use `<label>-public-dns` and `<label>-private-dns`. This retains the original tag contract.
 
 ## Outputs
 
-| Name | Purpose |
-| --- | --- |
-| `id` | Virtual network resource ID. |
-| `name` | Virtual network name. |
-| `resource_group_name` | Virtual network resource group name. |
-| `address_space` | Virtual network address ranges. |
+`vnet` is the complete `azurerm_virtual_network.main` resource, preserving consumers such as `module.vnet.vnet.id` and `.name`. Convenience outputs are `id`, `name`, `resource_group_name`, `address_space`, `public_dns_zone_ids`, `private_dns_zone_ids` and `diagnostic_setting_id` (null when disabled). DNS ID maps use zone names as keys.
 
-## Design and scope
+## Examples and verification
 
-- Subnets are managed separately, so the module never mixes inline subnet blocks with standalone subnet resources.
-- Private DNS zones, links and records belong in the calling network composition. Public DNS zones and records have their own lifecycle and are outside this VNet module.
-- The module owns the VNet's DNS server list. Do not also use `azurerm_virtual_network_dns_servers` against the same network.
-- The module attaches an existing DDoS plan only when requested. It does not create a paid plan or claim to provide complete DDoS protection on its own.
-- Diagnostics are absent by default. A supplied workspace enables the `VMProtectionAlerts` resource-log category. This does not configure VNet flow logs, Network Watcher, subscription activity logs, metric export or alert rules. Metrics can be configured separately where required; this keeps compatibility with the AzureRM 4.0 diagnostic schema without using the deprecated `metric` block.
-- Production network security also needs subnet policies, routing, controlled egress, access controls, and monitoring appropriate to the workloads. These are intentionally composed outside this resource module.
+- [Basic](examples/basic): resource group and VNet.
+- [DNS](examples/dns): public/private A, CNAME and MX records with reserved example data.
+- [Migration notes](docs/MIGRATION.md): source changes, diagnostic state address and compatibility.
 
-## Local checks
-
-```shell
+```sh
 terraform fmt -check -recursive
 terraform init -backend=false
 terraform validate
 terraform test
-terraform -chdir=examples/basic init -backend=false
-terraform -chdir=examples/basic validate
 ```
 
-The native Terraform tests use a mocked provider and `command = plan`. They require no Azure credentials and do not create cloud resources. They cover default behavior, optional DNS/DDoS/diagnostics settings, tag preservation, dual-stack address syntax, and invalid inputs. Initialization downloads provider binaries. A passing mock test demonstrates configuration behavior, not a live Azure deployment or service capability test.
+The tests use mocked AzureRM resources and need no Azure credentials. They verify original defaults, DNS records/link selection, diagnostics, DDoS and rejected inputs. They do not establish live Azure connectivity, permissions, DNS resolution or deployment success. Shared GitHub Actions and Azure Pipelines validate this module and its examples without cloud credentials. Real deployments need an intentional plan and a caller-owned backend/provider configuration.
 
-## Migration from AZ-TF-MOD-vnet
-
-This is a breaking interface change, not an in-place source replacement:
-
-| Legacy input or output | New interface |
-| --- | --- |
-| `label` and `vnet_suffix` | Supply their previous combined value as `name` to retain the Azure resource name. |
-| `vnet_ip_range` | `address_space` |
-| `ddos_plan_id = ""` | `ddos_protection_plan_id = null` |
-| `diag_log_workspace` with an implicit default | Explicit `log_analytics_workspace_id`, or `null` to omit diagnostics. |
-| `dns`, `dns_zone_name`, `private_dns` | Move DNS resources into separately managed modules or the root composition. |
-| `vnet` whole-resource output | Explicit `id`, `name`, `resource_group_name`, and `address_space` outputs. |
-
-For an existing deployment, back up state and inventory every resource before changing the module source. Preserve DNS resources with explicit state moves/imports into their new owners; removing their old configuration without doing this would schedule deletion. No migration is performed automatically by this repository.
-
-The VNet address changes from `azurerm_virtual_network.main` to `azurerm_virtual_network.this`. For a root that uses `module "vnet"` before and after, a caller-owned move can preserve that state address:
-
-```hcl
-moved {
-  from = module.vnet.azurerm_virtual_network.main
-  to   = module.vnet.azurerm_virtual_network.this
-}
-```
-
-Adapt the addresses to your real module hierarchy. The old diagnostic resource was `azurerm_monitor_diagnostic_setting.vnet`; the new optional resource is `azurerm_monitor_diagnostic_setting.this[0]`, and its setting name changes from `<vnet-name>-log` to `<vnet-name>-diagnostics`. Review the resulting replacement and the removal of metric export separately. Tags no longer inject a `Name` value, so supply that tag explicitly if it must be retained. Review a real plan for unintended replacement or destruction before applying any migration.
-
-## References
-
-- [AzureRM virtual network resource](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/virtual_network)
-- [Azure resource naming rules](https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/resource-name-rules#microsoftnetwork)
-- [Azure Virtual Network monitoring data reference](https://learn.microsoft.com/en-us/azure/virtual-network/monitor-virtual-network-reference)
-- [AzureRM 4.0 diagnostic setting schema](https://github.com/hashicorp/terraform-provider-azurerm/blob/v4.0.0/website/docs/r/monitor_diagnostic_setting.html.markdown)
+Licensed under [Apache-2.0](LICENSE). See [contributing](CONTRIBUTING.md) and [security reporting](SECURITY.md).
