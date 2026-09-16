@@ -18,3 +18,6 @@ terraform.rc
 .env
 .env.*
 !.env.example
+
+# Shared helper context, saved plans and private manifests.
+.terraform-delivery/
