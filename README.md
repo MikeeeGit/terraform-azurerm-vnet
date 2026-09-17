@@ -75,6 +75,7 @@ The generated VNet `Name` tag is `<label>-vnet`, even when the suffix differs. P
 
 - [Basic](examples/basic): resource group and VNet.
 - [DNS](examples/dns): public/private A, CNAME and MX records with reserved example data.
+- [Hub and two spokes](examples/hub-spoke): reciprocal peerings, shared private DNS, caller-owned subnet policy and optional NAT egress.
 - [Migration notes](docs/MIGRATION.md): source changes, diagnostic state address and compatibility.
 
 ```sh

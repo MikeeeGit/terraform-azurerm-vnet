@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0
+
+- Add a hub and two-spoke example with reciprocal peering, private DNS and optional per-network NAT.
+- Validate the full topology with mocked-provider tests on both CI platforms.
+- Preserve the existing module interface.
+
 ## 0.2.0
 
 - Restore the original `AZ-TF-MOD-vnet` input names, resource addresses, complete `vnet` output, naming and generated tags.
