@@ -88,3 +88,7 @@ terraform test
 The tests use mocked AzureRM resources and need no Azure credentials. They verify original defaults, DNS records/link selection, diagnostics, DDoS and rejected inputs. They do not establish live Azure connectivity, permissions, DNS resolution or deployment success. Shared GitHub Actions and Azure Pipelines validate this module and its examples without cloud credentials. Real deployments need an intentional plan and a caller-owned backend/provider configuration.
 
 Licensed under [Apache-2.0](LICENSE). See [contributing](CONTRIBUTING.md) and [security reporting](SECURITY.md).
+
+## CI change scope
+
+Markdown-only edits use lightweight required GitHub checks and are excluded from automatic Azure validation builds. Changes to Terraform, application code, scripts, workflow definitions or executable examples still run full validation, including examples stored under docs/. Mixed changes also run full validation. Manual GitHub runs and unknown Git comparison ranges default to full validation.
